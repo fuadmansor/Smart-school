@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title id="page-title">نظام المدرسة الذكي</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet">
+    
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
+
+    <style>
+        :root { --p-color: #075e54; --font: 'Tajawal'; }
+        body { font-family: var(--font), sans-serif; background-color: #f3f4f6; height: 100vh; overflow: hidden; display: flex; flex-direction: column; -webkit-tap-highlight-color: transparent; }
+        .view-section { display: none; flex-direction: column; height: 100%; overflow-y: auto; overflow-x: hidden; padding-bottom: 80px; }
+        .view-section.active { display: flex; animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .modal-overlay { background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); }
+        .chat-bubble { max-width: 80%; padding: 10px 14px; border-radius: 20px; font-size: 13px; font-weight: bold; line-height: 1.5; position: relative; word-wrap: break-word;}
+        .chat-mine { background-color: #dcf8c6; color: #000; border-bottom-left-radius: 4px; align-self: flex-start; margin-right: auto;}
+        .chat-other { background-color: #fff; border: 1px solid #eee; color: #333; border-bottom-right-radius: 4px; align-self: flex-end; margin-left: auto;}
+        
+        .hide-scroll::-webkit-scrollbar { display: none; }
+        
+        /* إعدادات الطباعة المخصصة */
+        @media print {
+            @page { size: A4; margin: 10mm; }
+            body * { visibility: hidden; }
+            #print-target, #print-target * { visibility: visible; }
+            #print-target { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 20px; background: white; }
+            .no-print { display: none !important; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="print-target" class="hidden z-[999999]"></div>
+
+    <div id="alert-box" class="fixed top-20 left-1/2 transform -translate-x-1/2 z-[9999] w-[90%] max-w-sm px-6 py-4 rounded-2xl text-white font-bold text-sm shadow-2xl hidden text-center transition-all"></div>
+
+    <div id="edit-modal" class="fixed inset-0 modal-overlay z-[9000] hidden items-center justify-center p-4 no-print">
+        <div class="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="text-white p-4 flex justify-between items-center" style="background-color: var(--p-color);">
+                <h3 class="font-bold text-sm">تعديل البيانات</h3>
+                <button onclick="closeModal('edit-modal')" class="bg-white/20 p-1 rounded-lg"><i data-lucide="x" size="18"></i></button>
+            </div>
+            <div class="p-5 space-y-4 overflow-y-auto">
+                <input type="hidden" id="edit-type"><input type="hidden" id="edit-id">
+                <div><label class="text-[10px] font-bold text-slate-500 mb-1 block">الاسم</label><input type="text" id="edit-name" class="w-full p-3 bg-slate-50 border rounded-xl outline-none font-bold text-sm"></div>
+                <div><label class="text-[10px] font-bold text-slate-500 mb-1 block">رقم الدخول</label><input type="text" inputmode="numeric" id="edit-username" class="w-full p-3 bg-slate-50 border rounded-xl outline-none font-bold text-sm dir-ltr text-right"></div>
+                <div><label class="text-[10px] font-bold text-slate-500 mb-1 block">كلمة المرور</label><input type="text" id="edit-password" class="w-full p-3 bg-slate-50 border rounded-xl outline-none font-bold text-sm text-red-500"></div>
+                <div id="edit-extra-fields" class="space-y-4"></div>
+                <button onclick="saveEditModal()" class="w-full text-white py-3 rounded-xl font-bold mt-2 shadow-md active:scale-95 transition" style="background-color: var(--p-color);">حفظ التعديلات</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="members-modal" class="fixed inset-0 modal-overlay z-[9000] hidden items-end sm:items-center justify-center p-0 sm:p-4 no-print">
+        <div class="bg-white w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[75vh]">
+            <div class="p-4 flex justify-between items-center border-b bg-slate-50">
+                <h3 class="font-black text-sm flex items-center gap-2"><i data-lucide="users" class="text-[#075e54]"></i> أعضاء وصلاحيات المجموعة</h3>
+                <button onclick="closeModal('members-modal')" class="bg-slate-200 p-1.5 rounded-lg text-slate-600"><i data-lucide="x" size="16"></i></button>
+            </div>
+            <div id="members-list" class="p-4 overflow-y-auto space-y-2 flex-1"></div>
+        </div>
+    </div>
+
+    <header class="h-16 shrink-0 flex items-center justify-between px-4 text-white shadow-md z-[1000] no-print sticky top-0" style="background-color: var(--p-color);">
+        <div class="flex items-center gap-2 cursor-pointer" onclick="switchView('home')">
+            <div class="bg-white/20 p-2 rounded-xl"><i data-lucide="graduation-cap" size="20"></i></div>
+            <h1 id="header-school-name" class="text-sm font-black truncate max-w-[140px]"></h1>
+        </div>
+        <div class="flex items-center gap-2">
+            <button id="chat-btn" onclick="openChatMenu()" class="hidden bg-white/20 p-2 rounded-xl active:bg-white/30 transition relative"><i data-lucide="message-circle" size="18"></i></button>
+            <button id="my-portal-btn" onclick="openMyPortal()" class="hidden bg-yellow-400 text-slate-900 px-3 py-2 rounded-xl font-black text-xs shadow-sm active:scale-95 flex items-center gap-1"><span id="portal-text">لوحتي</span></button>
+            <div id="auth-container"><button onclick="switchView('login')" class="bg-white/20 px-4 py-2 rounded-xl font-bold text-xs active:bg-white/30 flex items-center gap-2"><i data-lucide="log-in" size="14"></i> دخول</button></div>
+        </div>
+    </header>
+
+    <main class="flex-1 overflow-hidden bg-slate-50 relative">
+
+        <div id="view-home" class="view-section p-4 space-y-6 no-print">
+            <div class="rounded-3xl p-6 text-white shadow-lg relative overflow-hidden" style="background: linear-gradient(135deg, var(--p-color), #0f172a);">
+                <h2 class="text-3xl font-black mb-3 leading-tight">نصنع قادة الغد</h2>
+                <h3 class="text-sm font-bold text-yellow-300 mb-2 border-b border-white/20 pb-2 inline-block">عن المدرسة:</h3>
+                <p id="info-bio" class="text-xs opacity-90 leading-relaxed"></p>
+                <div class="mt-4 inline-block bg-white/20 px-3 py-1 rounded-lg text-[10px] font-bold backdrop-blur-sm">العام الدراسي: <span id="home-year"></span></div>
+                <i data-lucide="award" class="absolute -bottom-6 -left-6 w-32 h-32 text-white/5 rotate-12"></i>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="switchView('news')" class="bg-white p-4 rounded-2xl border shadow-sm text-center active:scale-95"><div class="bg-blue-50 text-blue-600 w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-2"><i data-lucide="megaphone" size="18"></i></div><p class="font-bold text-xs text-slate-700">الأخبار</p></button>
+                <button onclick="switchView('staff-public')" class="bg-white p-4 rounded-2xl border shadow-sm text-center active:scale-95"><div class="bg-emerald-50 text-emerald-600 w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-2"><i data-lucide="users" size="18"></i></div><p class="font-bold text-xs text-slate-700">الكادر</p></button>
+            </div>
+            <div class="pt-4"><h2 class="text-lg font-black mb-3 border-r-4 pr-3 border-[#075e54]">أحدث الأخبار</h2><div id="home-news-container" class="space-y-3"></div></div>
+            <footer class="bg-slate-900 text-slate-300 p-6 rounded-3xl text-center shadow-inner mt-6">
+                <h3 class="text-white font-black mb-4 text-sm">تواصل معنا</h3>
+                <div class="flex flex-col gap-3 font-bold text-sm mb-4 bg-slate-800 p-4 rounded-2xl border border-slate-700"><span id="footer-phone" class="flex items-center justify-center gap-2 text-blue-400"></span><span id="footer-email" class="flex items-center justify-center gap-2 text-emerald-400"></span></div>
+                <div id="footer-copy" class="text-[10px] opacity-50"></div>
+            </footer>
+        </div>
+        <div id="view-news" class="view-section p-4 space-y-4 no-print"><h2 class="text-lg font-black border-r-4 pr-3 border-[#075e54]">المركز الإعلامي</h2><div id="full-news-list" class="space-y-4"></div></div>
+        <div id="view-staff-public" class="view-section p-4 space-y-4 no-print"><h2 class="text-lg font-black border-r-4 pr-3 border-[#075e54]">الهيئة التعليمية</h2><div class="grid grid-cols-2 gap-3" id="public-staff-grid"></div></div>
+
+        <div id="view-login" class="view-section p-4 justify-center items-center no-print">
+            <div class="bg-white p-6 rounded-[2rem] shadow-xl w-full max-w-md border-t-8 border-[#075e54]">
+                <div class="text-center mb-6"><div class="w-14 h-14 bg-slate-50 text-[#075e54] rounded-full flex items-center justify-center mx-auto mb-3 border"><i data-lucide="shield-check" size="24"></i></div><h2 class="text-lg font-black">بوابة الدخول</h2></div>
+                <div class="flex bg-slate-100 p-1 rounded-xl mb-6 shadow-inner">
+                    <button onclick="setLoginMode('student')" id="btn-login-student" class="flex-1 py-3 text-xs font-black rounded-lg transition">طالب</button>
+                    <button onclick="setLoginMode('staff')" id="btn-login-staff" class="flex-1 py-3 text-xs font-black rounded-lg transition">معلم</button>
+                    <button onclick="setLoginMode('admin')" id="btn-login-admin" class="flex-1 py-3 text-xs font-black rounded-lg transition">مدير</button>
+                </div>
+                <div id="login-fields-container" class="space-y-3"></div>
+            </div>
+        </div>
+
+        <div id="view-student" class="view-section p-4">
+            <div id="stu-cert-area" class="bg-white p-5 rounded-3xl shadow-sm border relative"></div>
+            <button onclick="doPrint('stu-cert-area')" class="w-full mt-4 bg-slate-800 text-white py-4 rounded-xl font-black no-print shadow-lg hover:bg-black transition active:scale-95"><i data-lucide="printer" class="inline mb-1 mr-2"></i> طباعة الشهادة / حفظ كملف PDF</button>
+        </div>
+
+        <div id="view-teacher" class="view-section p-4">
+            <div class="bg-white p-5 rounded-3xl border text-center shadow-sm mb-4 no-print">
+                <div class="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full mx-auto flex items-center justify-center mb-3"><i data-lucide="edit-3" size="24"></i></div>
+                <h2 id="tch-name" class="font-black text-slate-800"></h2>
+                <p id="tch-subject" class="text-emerald-600 font-bold text-xs mb-3 bg-emerald-50 inline-block px-3 py-1 rounded-full border"></p>
+                <select id="tch-class-selector" onchange="renderTeacherStudents()" class="w-full p-3 border-2 rounded-xl bg-slate-50 font-bold outline-none text-sm text-center"></select>
+                <button onclick="doPrint('teacher-print-area')" class="w-full mt-4 bg-slate-800 text-white py-3 rounded-xl font-bold"><i data-lucide="printer" class="inline mb-1 mr-2" size="18"></i> طباعة الكشف</button>
+            </div>
+            
+            <div id="teacher-print-area" class="bg-white rounded-3xl border shadow-sm overflow-hidden flex flex-col">
+                <div class="hidden print-only text-center mb-6 pb-4 border-b-2 border-black p-4 w-full">
+                    <h2 class="text-xl font-black mb-2" id="print-tch-school"></h2>
+                    <p class="font-bold text-sm">كشف درجات مادة: <span id="print-tch-sub"></span></p>
+                    <p class="font-bold text-xs mt-1">الصف: <span id="print-tch-cls"></span> | المعلم: <span id="print-tch-tname"></span> | العام: <span id="print-tch-year"></span></p>
+                </div>
+                <div class="p-3 bg-slate-50 border-b no-print"><h3 class="font-black text-xs">كشف الدرجات</h3></div>
+                <div class="overflow-x-auto w-full">
+                    <table class="w-full text-right border-collapse min-w-[500px]">
+                        <thead class="bg-slate-100 text-[10px] text-slate-600 border-b">
+                            <tr>
+                                <th class="p-2 border-l border-slate-200 sticky right-0 bg-slate-100 z-10">الطالب</th>
+                                <th class="p-2 text-center w-14">محصلة ف1</th>
+                                <th class="p-2 text-center w-14">اختبار نصف</th>
+                                <th class="p-2 text-center w-14 border-l border-slate-200">محصلة ف2</th>
+                                <th class="p-2 text-center w-14">اختبار نهائي</th>
+                                <th class="p-2 text-center w-14 text-[#075e54]">المجموع</th>
+                                <th class="p-2 text-center no-print">حفظ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tch-students-tbody" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-admin" class="view-section bg-slate-50 no-print">
+            <div id="admin-main-menu" class="p-4 grid grid-cols-2 gap-3 fade-in">
+                <div class="col-span-2 bg-white p-4 rounded-2xl shadow-sm border mb-2 flex items-center justify-between"><div><h3 class="font-black text-slate-800">المركز الإداري</h3><p id="admin-welcome-name" class="text-xs text-slate-500 font-bold"></p></div><div class="w-10 h-10 bg-slate-800 text-yellow-400 rounded-full flex items-center justify-center"><i data-lucide="shield"></i></div></div>
+                <button onclick="loadAdminTab('stats')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-blue-500 mb-2 flex justify-center"><i data-lucide="bar-chart-2" size="28"></i></div><p class="font-bold text-xs">إحصائيات</p></button>
+                <button onclick="loadAdminTab('students')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-emerald-500 mb-2 flex justify-center"><i data-lucide="users" size="28"></i></div><p class="font-bold text-xs">الطلاب</p></button>
+                <button onclick="loadAdminTab('staff')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-amber-500 mb-2 flex justify-center"><i data-lucide="briefcase" size="28"></i></div><p class="font-bold text-xs">المعلمين</p></button>
+                <button onclick="loadAdminTab('admins')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-red-500 mb-2 flex justify-center"><i data-lucide="shield-check" size="28"></i></div><p class="font-bold text-xs">المدراء</p></button>
+                <button onclick="loadAdminTab('subjects')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-purple-500 mb-2 flex justify-center"><i data-lucide="book-open" size="28"></i></div><p class="font-bold text-xs">الصفوف والمواد</p></button>
+                <button onclick="loadAdminTab('news')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-orange-500 mb-2 flex justify-center"><i data-lucide="megaphone" size="28"></i></div><p class="font-bold text-xs">الأخبار</p></button>
+                <button onclick="loadAdminTab('reports')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-indigo-500 mb-2 flex justify-center"><i data-lucide="printer" size="28"></i></div><p class="font-bold text-xs">التقارير</p></button>
+                <button onclick="loadAdminTab('promotion')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-teal-500 mb-2 flex justify-center"><i data-lucide="fast-forward" size="28"></i></div><p class="font-bold text-xs">الترحيل السنوي</p></button>
+                <button onclick="loadAdminTab('archive')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-cyan-600 mb-2 flex justify-center"><i data-lucide="archive" size="28"></i></div><p class="font-bold text-xs">أرشيف النتائج</p></button>
+                <button onclick="loadAdminTab('settings')" class="bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-slate-600 mb-2 flex justify-center"><i data-lucide="settings" size="28"></i></div><p class="font-bold text-xs">الإعدادات</p></button>
+                <button onclick="loadAdminTab('design')" class="col-span-2 bg-white p-5 rounded-2xl border shadow-sm text-center active:scale-95"><div class="text-pink-500 mb-2 flex justify-center"><i data-lucide="palette" size="28"></i></div><p class="font-bold text-xs">التصميم</p></button>
+            </div>
+            <div id="admin-content-area" class="hidden flex-col h-full bg-slate-50 relative pb-20 fade-in">
+                <div class="bg-white border-b shadow-sm sticky top-0 z-10 p-3 flex items-center gap-3"><button onclick="backToAdminMenu()" class="bg-slate-100 p-2 rounded-xl text-slate-700 active:bg-slate-200"><i data-lucide="arrow-right" size="18"></i></button><h3 id="admin-content-title" class="font-black text-sm"></h3></div>
+                <div id="admin-dynamic-body" class="p-4 flex-1 overflow-y-auto"></div>
+            </div>
+        </div>
+
+        <div id="view-chat-menu" class="view-section p-4 bg-white no-print">
+            <h2 class="font-black text-lg border-b pb-3 mb-4 flex items-center gap-2"><i data-lucide="message-circle" class="text-[#075e54]"></i> الرسائل والمجموعات</h2>
+            <div class="flex bg-slate-100 p-1 rounded-xl mb-4 text-xs font-bold text-center">
+                <button onclick="setChatTab('private')" id="chat-tab-private" class="flex-1 py-2 rounded-lg bg-white shadow-sm text-[#075e54]">الخاص</button>
+                <button onclick="setChatTab('groups')" id="chat-tab-groups" class="flex-1 py-2 rounded-lg text-slate-500">مجموعاتي</button>
+            </div>
+            <div id="chat-list-container" class="space-y-2 overflow-y-auto pb-20"></div>
+        </div>
+
+        <div id="view-chat-room" class="view-section bg-slate-50 relative h-full no-print">
+            <div class="bg-white border-b shadow-sm sticky top-0 z-10 p-3 flex items-center justify-between" style="background-color: var(--p-color); color:white;">
+                <div class="flex items-center gap-3">
+                    <button onclick="switchView('chat-menu')" class="bg-white/20 p-2 rounded-xl"><i data-lucide="arrow-right" size="18"></i></button>
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <div id="chat-room-icon" class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center shrink-0"></div>
+                        <div class="truncate"><h3 id="chat-room-name" class="font-black text-sm truncate"></h3><p id="chat-room-sub" class="text-[10px] font-bold opacity-80 truncate"></p></div>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button id="chat-block-btn" onclick="togglePrivateBlock()" class="hidden bg-red-500/20 text-white p-2 rounded-xl active:bg-red-500/50"><i data-lucide="ban" size="18"></i></button>
+                    <button id="chat-info-btn" onclick="showChatMembers()" class="hidden bg-white/20 p-2 rounded-xl active:bg-white/30"><i data-lucide="info" size="18"></i></button>
+                </div>
+            </div>
+            
+            <div id="chat-messages-area" class="flex-1 p-4 overflow-y-auto flex flex-col space-y-3 pb-24" style="background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); background-blend-mode: overlay; background-color: #e5ddd5;"></div>
+
+            <div class="absolute bottom-0 left-0 right-0 p-3 bg-slate-100 border-t flex items-center gap-2 pb-6">
+                <input type="text" id="chat-input" placeholder="اكتب رسالة..." class="flex-1 p-3 rounded-full border border-slate-300 outline-none text-sm font-bold shadow-inner disabled:bg-slate-200 disabled:text-slate-500">
+                <button id="chat-send-btn" onclick="sendMessage()" class="bg-[#075e54] text-white w-12 h-12 rounded-full flex items-center justify-center shrink-0 shadow-md active:scale-90 transition disabled:opacity-50 disabled:active:scale-100"><i data-lucide="send" size="18" class="mr-1"></i></button>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // =====================================
+        // 1. قاعدة البيانات والتهيئة (السحابية - Firebase)
+        // =====================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyBAdiRzhzUZvfUJZHCJOE-Y6yy-jUpj9-Y",
+            authDomain: "smartschool-87830.firebaseapp.com",
+            databaseURL: "https://smartschool-87830-default-rtdb.firebaseio.com",
+            projectId: "smartschool-87830",
+            storageBucket: "smartschool-87830.firebasestorage.app",
+            messagingSenderId: "953451419965",
+            appId: "1:953451419965:web:9f24bdd062b96ea29ecd54",
+            measurementId: "G-F9271S16V0"
+        };
+
+        // تهيئة الاتصال السحابي
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // الهيكل الافتراضي للنظام
+        let defaultDB = {
+            st: [], sf: [], ad: [], nw: [],
+            sb: ['القرآن', 'الإسلامية', 'العربية', 'الرياضيات', 'العلوم'],
+            cl: ['الصف الأول', 'الصف الثاني', 'الصف الثالث'],
+            map: {},
+            in: { name: 'نظام المدرسة الذكي', bio: 'صرح تعليمي.', phone: '777', email: 'info@school.com', currentYear: '2025-2026' },
+            th: { p: '#075e54', f: 'Tajawal' },
+            msg_p: [], msg_g: [], bl: { private: {}, groups: {} }
+        };
+
+        let DB = JSON.parse(JSON.stringify(defaultDB)); 
+        let currentUser = null, currentLoginMode = 'student', currentChatContext = null;
+        let isDBLoaded = false;
+
+        // دالة الحفظ السحابي
+        function saveDB() {
+            if(!isDBLoaded) return; // منع المسح الخاطئ قبل التحميل
+            database.ref('school_data').set(DB)
+                .then(() => applyConfig())
+                .catch((error) => console.error("خطأ في الاتصال:", error));
+        }
+
+        // الاستماع للتحديثات السحابية المباشرة (Real-time)
+        database.ref('school_data').on('value', (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                // منع انهيار النظام إذا قام Firebase بحذف المصفوفات الفارغة
+                DB.st = data.st || [];
+                DB.sf = data.sf || [];
+                DB.ad = data.ad || [];
+                DB.nw = data.nw || [];
+                DB.sb = data.sb || defaultDB.sb;
+                DB.cl = data.cl || defaultDB.cl;
+                DB.map = data.map || {};
+                DB.in = data.in || defaultDB.in;
+                DB.th = data.th || defaultDB.th;
+                DB.msg_p = data.msg_p || [];
+                DB.msg_g = data.msg_g || [];
+                DB.bl = data.bl || { private: {}, groups: {} };
+                if(!DB.bl.private) DB.bl.private = {};
+                if(!DB.bl.groups) DB.bl.groups = {};
+
+                isDBLoaded = true;
+                applyConfig();
+                
+                // تحديث واجهة المستخدم إذا كانت مفتوحة
+                if (currentUser && document.getElementById('view-chat-room').classList.contains('active')) {
+                    renderMessages();
+                }
+                if (currentUser && currentUser.role === 'admin' && !document.getElementById('admin-content-area').classList.contains('hidden')) {
+                    // تحديث صامت للقوائم الإدارية لضمان عدم الكتابة فوق بعض
+                }
+            } else {
+                // إذا كانت السحابة فارغة تماماً (التشغيل الأول)
+                isDBLoaded = true;
+                saveDB();
+                applyConfig();
+            }
+            
+            // تحديث شاشة الدخول إذا كان المدير الأول غير موجود
+            if(document.getElementById('view-login').classList.contains('active')) {
+                renderLoginFields();
+            }
+        });
+
+        function applyConfig() {
+            document.documentElement.style.setProperty('--p-color', DB.th.p);
+            document.documentElement.style.setProperty('--font', `'${DB.th.f}', sans-serif`);
+            document.getElementById('header-school-name').innerText = DB.in.name;
+            if(document.getElementById('home-year')) document.getElementById('home-year').innerText = DB.in.currentYear;
+            lucide.createIcons();
+        }
+
+        function showAlert(msg, type = 'success') {
+            const box = document.getElementById('alert-box'); box.innerText = msg;
+            box.className = `fixed top-20 left-1/2 transform -translate-x-1/2 z-[9999] w-[90%] max-w-sm px-6 py-4 rounded-2xl text-white font-bold text-sm shadow-2xl block text-center ${type==='success'?'bg-emerald-500':'bg-red-600'} transition-all`;
+            setTimeout(() => { box.classList.add('hidden'); box.classList.remove('block'); }, 2500);
+        }
+
+        function closeModal(id) { document.getElementById(id).classList.replace('flex', 'hidden'); }
+
+        function doPrint(elementId) {
+            const printTarget = document.getElementById('print-target');
+            const sourceElement = document.getElementById(elementId);
+            if(!sourceElement) return;
+            printTarget.innerHTML = sourceElement.innerHTML;
+            printTarget.classList.remove('hidden');
+            window.print();
+            printTarget.classList.add('hidden');
+            printTarget.innerHTML = '';
+        }
+
+        function switchView(viewId) {
+            document.querySelectorAll('.view-section').forEach(v => { v.classList.remove('active'); v.style.display = 'none'; });
+            const target = document.getElementById('view-' + viewId);
+            if(target) { target.style.display = 'flex'; target.classList.add('active'); }
+
+            if(viewId === 'home') renderHome();
+            if(viewId === 'admin') showAdminMenu();
+            if(viewId === 'student') renderStudentCert();
+            if(viewId === 'teacher') renderTeacherPortal();
+            if(viewId === 'chat-menu') renderChatMenu();
+            if(viewId === 'staff-public') renderPublicStaff();
+            if(viewId === 'news') renderPublicNews();
+            
+            lucide.createIcons(); window.scrollTo(0,0);
+        }
+
+        // =====================================
+        // 2. نظام الدخول
+        // =====================================
+        function setLoginMode(mode) {
+            currentLoginMode = mode;
+            document.querySelectorAll('#view-login button[id^="btn-login-"]').forEach(b => { b.classList.remove('bg-white', 'shadow-md', 'text-[#075e54]'); b.classList.add('text-slate-500'); });
+            document.getElementById('btn-login-' + mode).classList.add('bg-white', 'shadow-md', 'text-[#075e54]');
+            renderLoginFields();
+        }
+
+        function renderLoginFields() {
+            const container = document.getElementById('login-fields-container');
+            if(currentLoginMode === 'admin' && (!DB.ad || DB.ad.length === 0)) {
+                container.innerHTML = `<div class="bg-amber-50 p-3 rounded-xl mb-3"><p class="text-[11px] font-bold text-amber-700 text-center">قم بإعداد حساب الإدارة الأول.</p></div><input type="text" id="reg-n" placeholder="الاسم الكامل" class="w-full p-3 bg-slate-50 border rounded-xl font-bold mb-2 text-sm outline-none"><input type="text" inputmode="numeric" id="reg-u" placeholder="رقم الدخول (أرقام)" class="w-full p-3 bg-slate-50 border rounded-xl font-bold text-blue-600 dir-ltr text-right mb-2 text-sm outline-none"><input type="password" id="reg-p" placeholder="كلمة المرور" class="w-full p-3 bg-slate-50 border rounded-xl font-bold text-red-500 mb-3 text-sm outline-none"><button onclick="setupAdmin()" class="w-full py-3 text-white rounded-xl font-black shadow-md text-sm" style="background-color: var(--p-color);">إنشاء النظام</button>`;
+            } else {
+                container.innerHTML = `<input type="text" inputmode="numeric" id="l-u" placeholder="رقم الدخول" class="w-full p-3 bg-slate-50 border rounded-xl font-bold dir-ltr text-right mb-3 text-sm outline-none"><input type="password" id="l-p" placeholder="كلمة المرور" class="w-full p-3 bg-slate-50 border rounded-xl font-bold mb-4 text-sm outline-none"><button onclick="login()" class="w-full py-3 text-white rounded-xl font-black shadow-md text-sm active:scale-95" style="background-color: var(--p-color);">دخول</button>`;
+            }
+        }
+
+        function setupAdmin() {
+            const n = document.getElementById('reg-n').value.trim(), u = document.getElementById('reg-u').value.trim(), p = document.getElementById('reg-p').value.trim();
+            if(n && u && p) { DB.ad.push({id: Date.now().toString(), name: n, username: u, password: p, role:'admin'}); saveDB(); showAlert('تم التأسيس! سجل دخولك الآن'); renderLoginFields(); }
+            else showAlert('أكمل كافة البيانات', 'error');
+        }
+
+        function login() {
+            const u = document.getElementById('l-u').value.trim(), p = document.getElementById('l-p').value.trim();
+            let found = null;
+            if(currentLoginMode === 'admin') found = DB.ad.find(x => x.username === u && x.password === p);
+            else if(currentLoginMode === 'staff') found = DB.sf.find(x => x.username === u && x.password === p);
+            else found = DB.st.find(x => x.username === u && x.password === p);
+
+            if(found) {
+                currentUser = {...found, role: currentLoginMode};
+                document.getElementById('chat-btn').classList.remove('hidden');
+                document.getElementById('my-portal-btn').classList.remove('hidden');
+                document.getElementById('auth-container').innerHTML = `<button onclick="logout()" class="bg-red-500 text-white p-2 rounded-xl active:bg-red-600"><i data-lucide="log-out" size="16"></i></button>`;
+                openMyPortal(); lucide.createIcons();
+            } else showAlert('بيانات الدخول غير صحيحة', 'error');
+        }
+
+        function logout() { 
+            currentUser = null; 
+            document.getElementById('chat-btn').classList.add('hidden');
+            document.getElementById('my-portal-btn').classList.add('hidden');
+            document.getElementById('auth-container').innerHTML = `<button onclick="switchView('login')" class="bg-white/20 px-4 py-2 rounded-xl font-bold text-xs"><i data-lucide="log-in" size="14" class="inline"></i> دخول</button>`;
+            switchView('home'); 
+        }
+        function openMyPortal() { switchView(currentUser.role === 'admin' ? 'admin' : (currentUser.role === 'staff' ? 'teacher' : 'student')); }
+
+        // =====================================
+        // 3. لوحة تحكم الإدارة
+        // =====================================
+        function showAdminMenu() { document.getElementById('admin-main-menu').classList.remove('hidden'); document.getElementById('admin-content-area').classList.add('hidden'); document.getElementById('admin-content-area').classList.remove('flex'); document.getElementById('admin-welcome-name').innerText = currentUser.name; }
+        function backToAdminMenu() { showAdminMenu(); }
+
+        function loadAdminTab(tab) {
+            document.getElementById('admin-main-menu').classList.add('hidden');
+            document.getElementById('admin-content-area').classList.remove('hidden');
+            document.getElementById('admin-content-area').classList.add('flex');
+            
+            const titles = { 'stats':'إحصائيات', 'students':'الطلاب', 'staff':'المعلمين', 'admins':'المدراء', 'subjects':'الصفوف والمواد', 'news':'الأخبار', 'reports':'التقارير', 'promotion':'إغلاق العام والترحيل', 'archive':'أرشيف النتائج', 'settings':'الإعدادات', 'design':'التصميم' };
+            document.getElementById('admin-content-title').innerText = titles[tab];
+            const c = document.getElementById('admin-dynamic-body');
+            
+            if(tab === 'stats') {
+                c.innerHTML = `<div class="grid grid-cols-2 gap-3"><div class="bg-white p-4 rounded-xl border text-center"><h3 class="text-2xl font-black text-blue-600">${DB.st.length}</h3><p class="text-xs font-bold text-slate-500">طالب</p></div><div class="bg-white p-4 rounded-xl border text-center"><h3 class="text-2xl font-black text-emerald-600">${DB.sf.length}</h3><p class="text-xs font-bold text-slate-500">معلم</p></div><div class="bg-white p-4 rounded-xl border text-center"><h3 class="text-2xl font-black text-red-500">${DB.ad.length}</h3><p class="text-xs font-bold text-slate-500">مدير</p></div><div class="bg-white p-4 rounded-xl border text-center"><h3 class="text-2xl font-black text-purple-600">${DB.sb.length}</h3><p class="text-xs font-bold text-slate-500">مادة</p></div></div>`;
+            }
+            else if(tab === 'admins') {
+                c.innerHTML = `<div class="bg-white p-4 rounded-2xl border shadow-sm space-y-3 mb-4"><h3 class="font-black text-red-500 text-xs">إضافة مدير</h3><input id="ad-n" placeholder="الاسم" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><input type="text" inputmode="numeric" id="ad-u" placeholder="رقم الدخول" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><input id="ad-p" placeholder="الباسورد" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><button onclick="addUser('ad')" class="w-full bg-red-500 text-white py-3 rounded-xl font-bold text-xs">حفظ</button></div><div class="space-y-2">${DB.ad.map(a=>`<div class="bg-white p-3 rounded-xl border flex justify-between items-center"><div class="overflow-hidden"><p class="font-bold text-xs">${a.name}</p><p class="text-[10px] text-slate-400 mt-1">${a.username}</p></div><div class="flex gap-1 shrink-0"><button onclick="openEdit('ad','${a.id}')" class="bg-blue-50 text-blue-500 p-2 rounded-lg"><i data-lucide="edit" size="14"></i></button><button onclick="delUser('ad','${a.id}')" class="bg-red-50 text-red-500 p-2 rounded-lg"><i data-lucide="trash-2" size="14"></i></button></div></div>`).join('')}</div>`;
+            }
+            else if(tab === 'students') {
+                c.innerHTML = `<div class="bg-white p-4 rounded-2xl border shadow-sm space-y-3 mb-4"><h3 class="font-black text-blue-600 text-xs">إضافة طالب</h3><input id="st-n" placeholder="الاسم" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><input type="text" inputmode="numeric" id="st-u" placeholder="رقم الدخول" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><select id="st-l" class="w-full p-3 border rounded-xl text-xs font-bold outline-none">${DB.cl.map(cl=>`<option value="${cl}">${cl}</option>`).join('')}</select><input id="st-p" placeholder="الباسورد" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><button onclick="addUser('st')" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-xs">حفظ</button></div><div class="space-y-2">${DB.st.map(s=>`<div class="bg-white p-3 rounded-xl border flex justify-between items-center"><div class="overflow-hidden"><p class="font-bold text-xs">${s.name}</p><p class="text-[10px] text-blue-500 mt-1">${s.level} | ${s.username}</p></div><div class="flex gap-1 shrink-0"><button onclick="openEdit('st','${s.id}')" class="bg-blue-50 text-blue-500 p-2 rounded-lg"><i data-lucide="edit" size="14"></i></button><button onclick="delUser('st','${s.id}')" class="bg-red-50 text-red-500 p-2 rounded-lg"><i data-lucide="trash-2" size="14"></i></button></div></div>`).join('')}</div>`;
+            }
+            else if(tab === 'staff') {
+                 c.innerHTML = `<div class="bg-white p-4 rounded-2xl border shadow-sm space-y-3 mb-4"><h3 class="font-black text-emerald-600 text-xs">إضافة معلم</h3><input id="sf-n" placeholder="الاسم" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><input type="text" inputmode="numeric" id="sf-u" placeholder="رقم الدخول" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><select id="sf-s" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><option value="">-- المادة --</option>${DB.sb.map(s=>`<option>${s}</option>`).join('')}</select><input id="sf-p" placeholder="الباسورد" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><div class="p-2 border rounded-xl"><p class="text-[10px] font-bold mb-2">الصفوف:</p><div class="flex flex-wrap gap-2">${DB.cl.map(cl=>`<label class="text-[10px] bg-slate-100 px-2 py-1 rounded"><input type="checkbox" name="sf-cls" value="${cl}"> ${cl}</label>`).join('')}</div></div><button onclick="addUser('sf')" class="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold text-xs">حفظ</button></div><div class="space-y-2">${DB.sf.map(s=>`<div class="bg-white p-3 rounded-xl border flex justify-between items-center"><div class="overflow-hidden"><p class="font-bold text-xs">${s.name}</p><p class="text-[10px] text-emerald-600 mt-1">${s.subject} | ${s.username}</p></div><div class="flex gap-1 shrink-0"><button onclick="openEdit('sf','${s.id}')" class="bg-blue-50 text-blue-500 p-2 rounded-lg"><i data-lucide="edit" size="14"></i></button><button onclick="delUser('sf','${s.id}')" class="bg-red-50 text-red-500 p-2 rounded-lg"><i data-lucide="trash-2" size="14"></i></button></div></div>`).join('')}</div>`;
+            }
+            else if(tab === 'subjects') {
+                let mapHtml = DB.cl.map(c => {
+                    let activeSubs = DB.map[c] || DB.sb;
+                    let checkboxes = DB.sb.map(s => {
+                        let isChecked = activeSubs.includes(s) ? 'checked' : '';
+                        return `<label class="text-[10px] bg-slate-100 px-2 py-1 rounded inline-flex items-center gap-1"><input type="checkbox" onchange="toggleClassMap('${c}','${s}',this.checked)" ${isChecked}> ${s}</label>`;
+                    }).join('');
+                    return `<div class="p-3 border border-slate-200 rounded-xl mb-2"><h4 class="font-bold text-[11px] mb-2 text-[#075e54]">مواد ${c}</h4><div class="flex flex-wrap gap-2">${checkboxes}</div></div>`;
+                }).join('');
+
+                c.innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-white p-4 rounded-2xl border">
+                        <h3 class="font-black text-xs mb-3">جميع المواد في المدرسة</h3>
+                        <div class="flex gap-2 mb-3"><input id="new-sub" class="flex-1 p-2 border rounded-lg text-xs font-bold outline-none" placeholder="مادة جديدة"><button onclick="addList('sb', 'new-sub')" class="bg-slate-800 text-white px-3 rounded-lg">+</button></div>
+                        <div class="flex flex-wrap gap-2">${DB.sb.map((s,i)=>`<div class="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded text-xs"><span>${s}</span><button onclick="delList('sb',${i})" class="text-red-500"><i data-lucide="x" size="12"></i></button></div>`).join('')}</div>
+                    </div>
+                    <div class="bg-white p-4 rounded-2xl border">
+                        <h3 class="font-black text-xs mb-3">الصفوف (ترتيب الترحيل)</h3>
+                        <div class="flex gap-2 mb-3"><input id="new-cls" class="flex-1 p-2 border rounded-lg text-xs font-bold outline-none" placeholder="صف جديد"><button onclick="addList('cl', 'new-cls')" class="bg-slate-800 text-white px-3 rounded-lg">+</button></div>
+                        <div class="flex flex-wrap gap-2">${DB.cl.map((s,i)=>`<div class="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded text-xs"><span>${s}</span><button onclick="delList('cl',${i})" class="text-red-500"><i data-lucide="x" size="12"></i></button></div>`).join('')}</div>
+                    </div>
+                    <div class="bg-white p-4 rounded-2xl border shadow-sm">
+                        <h3 class="font-black text-xs mb-3 text-slate-800">تخصيص المواد لكل صف</h3>
+                        <p class="text-[10px] text-slate-500 mb-3 font-bold">حدد المواد التي يدرسها كل صف، وسيتم إخفاء المواد غير المحددة من شهاداتهم وكشوفاتهم.</p>
+                        ${mapHtml}
+                    </div>
+                </div>`;
+            }
+            else if(tab === 'news') {
+                c.innerHTML = `<div class="bg-white p-4 rounded-2xl border shadow-sm space-y-3 mb-4"><h3 class="font-black text-orange-500 text-xs">إضافة خبر جديد</h3><input id="nw-title" placeholder="عنوان الخبر" class="w-full p-3 border rounded-xl text-xs font-bold outline-none"><textarea id="nw-content" placeholder="التفاصيل..." class="w-full p-3 border rounded-xl text-xs font-bold outline-none h-20"></textarea><button onclick="addNews()" class="w-full bg-orange-500 text-white py-3 rounded-xl font-bold text-xs">نشر الخبر</button></div><div class="space-y-2">${DB.nw.map(n=>`<div class="bg-white p-3 rounded-xl border flex justify-between items-center"><div class="overflow-hidden"><p class="font-bold text-xs truncate">${n.title}</p></div><button onclick="delUser('nw','${n.id}')" class="bg-red-50 text-red-500 p-2 rounded-lg shrink-0"><i data-lucide="trash-2" size="14"></i></button></div>`).join('')}</div>`;
+            }
+            else if(tab === 'reports') {
+                c.innerHTML = `<div class="bg-white p-6 rounded-3xl border shadow-sm text-center fade-in"><div class="w-16 h-16 bg-indigo-50 text-indigo-500 rounded-full mx-auto flex items-center justify-center mb-3"><i data-lucide="file-text" size="28"></i></div><h3 class="font-black text-lg mb-2 text-slate-800">الكشوفات الجماعية</h3><select id="rep-cls-sel" class="w-full p-3 border-2 border-slate-200 rounded-xl bg-slate-50 outline-none font-bold text-xs mb-4 text-center"><option value="">-- اختر الصف الدراسي --</option>${DB.cl.map(cl => `<option value="${cl}">${cl}</option>`).join('')}</select><button onclick="generateAdminReport()" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-black text-sm active:scale-95 flex justify-center items-center gap-2"><i data-lucide="printer" size="16"></i> عرض وطباعة الكشف</button></div>
+                <div id="admin-report-print-area" class="hidden">
+                    <div class="text-center mb-6 pb-2 border-b-2 border-black w-full"><h1 class="text-xl font-black mb-1">${DB.in.name}</h1><h2 class="text-lg font-bold">الكشف العام لدرجات الطلاب</h2><p class="font-bold text-sm">الصف: <span id="rep-class-name"></span> | العام الدراسي: <span>${DB.in.currentYear}</span></p></div>
+                    <table class="w-full text-right border-collapse border border-black text-xs"><thead id="rep-table-head" class="bg-slate-100"></thead><tbody id="rep-table-body" class="divide-y border border-black"></tbody></table>
+                    <div class="mt-6 pt-4 border-t flex justify-between font-bold text-[10px] w-full"><p>توقيع المدير: ........................</p><p>تاريخ الطباعة: ${new Date().toLocaleDateString('ar-SA')}</p></div>
+                </div>`;
+            }
+            else if(tab === 'promotion') {
+                c.innerHTML = `<div class="bg-teal-50 border border-teal-200 p-4 rounded-2xl mb-4"><h3 class="font-black text-teal-800 text-sm mb-1">الترحيل السنوي (${DB.in.currentYear})</h3><p class="text-[10px] text-teal-700 font-bold leading-relaxed">تتم أرشفة النتيجة، والناجح ينتقل للصف التالي بناءً على مواد صفه.</p></div><div class="space-y-2">${DB.st.map(s=>{ const mySubjects = DB.map[s.level] || DB.sb; const passingScore = (mySubjects.length * 100) / 2; const isPassed = s.total >= passingScore; const statusText = isPassed ? 'ناجح' : 'راسب'; const statusColor = isPassed ? 'text-emerald-600' : 'text-red-500'; return `<div class="bg-white p-3 rounded-xl border flex justify-between items-center"><div><p class="font-bold text-xs">${s.name}</p><p class="text-[10px] text-slate-500 mt-1">${s.level} | المجموع: ${s.total} | <span class="${statusColor} font-black">${statusText}</span></p></div><button onclick="promoteStudent('${s.id}')" class="bg-teal-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold active:scale-95 shrink-0">ترحيل</button></div>`}).join('')}</div>`;
+            }
+            else if(tab === 'archive') {
+                c.innerHTML = `<div class="bg-white p-4 rounded-2xl border mb-4"><h3 class="font-black text-sm mb-2 text-slate-800">استعلام عن نتيجة سابقة</h3><div class="flex gap-2"><select id="arc-student-sel" class="flex-1 p-2 border rounded-xl text-xs font-bold outline-none bg-slate-50"><option value="">-- اختر الطالب --</option>${DB.st.map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}</select><button onclick="loadArchiveYears()" class="bg-cyan-600 text-white px-3 py-2 rounded-xl text-xs font-bold">بحث</button></div><div id="arc-years-container" class="mt-3 hidden"></div></div><div id="arc-result-area" class="bg-white p-5 rounded-3xl shadow-sm border relative hidden"></div>`;
+            }
+            else if(tab === 'settings') {
+                c.innerHTML = `<div class="bg-white p-5 rounded-3xl border shadow-sm fade-in space-y-3"><h3 class="font-black text-sm border-b pb-2 mb-3">بيانات المدرسة</h3><div><label class="text-[10px] font-bold text-slate-400 ml-1 block">الاسم</label><input id="set-n" value="${DB.in.name}" class="w-full p-3 border rounded-xl bg-slate-50 font-bold text-xs outline-none"></div><div><label class="text-[10px] font-bold text-slate-400 ml-1 block">وصف</label><textarea id="set-b" class="w-full p-3 border rounded-xl bg-slate-50 font-bold text-xs outline-none h-20">${DB.in.bio}</textarea></div><div class="grid grid-cols-2 gap-2"><div><label class="text-[10px] font-bold text-slate-400 ml-1 block">العام الدراسي</label><input id="set-y" value="${DB.in.currentYear || '2025-2026'}" class="w-full p-3 border rounded-xl bg-slate-50 font-bold text-xs outline-none text-center text-blue-600 dir-ltr"></div><div><label class="text-[10px] font-bold text-slate-400 ml-1 block">الهاتف</label><input id="set-p" value="${DB.in.phone || ''}" class="w-full p-3 border rounded-xl bg-slate-50 font-bold text-xs outline-none dir-ltr text-left"></div></div><button onclick="saveSettings()" class="w-full py-3 text-white rounded-xl font-black text-xs shadow-md mt-2" style="background-color: var(--p-color);">تحديث</button></div>`;
+            } 
+            else if(tab === 'design') {
+                c.innerHTML = `<div class="bg-white p-5 rounded-3xl border shadow-sm fade-in space-y-4 text-center"><div class="w-12 h-12 bg-pink-50 text-pink-600 rounded-full mx-auto flex items-center justify-center mb-1"><i data-lucide="palette"></i></div><h3 class="font-black text-sm mb-4">تخصيص الهوية</h3><div class="text-right"><label class="text-[10px] font-bold block mb-1">اللون</label><input type="color" id="thm-p" value="${DB.th.p}" onchange="saveTheme()" class="w-full h-12 rounded-xl border-0 p-0 shadow-sm"></div><div class="text-right"><label class="text-[10px] font-bold block mb-1">الخط</label><select id="thm-f" onchange="saveTheme()" class="w-full p-3 border rounded-xl bg-slate-50 font-bold outline-none text-xs"><option value="Tajawal" ${DB.th.f==='Tajawal'?'selected':''}>Tajawal</option><option value="Cairo" ${DB.th.f==='Cairo'?'selected':''}>Cairo</option></select></div></div>`;
+            }
+            lucide.createIcons();
+        }
+
+        function toggleClassMap(cls, sub, isChecked) {
+            if(!DB.map[cls]) DB.map[cls] = [...DB.sb]; 
+            if(isChecked) {
+                if(!DB.map[cls].includes(sub)) DB.map[cls].push(sub);
+            } else {
+                DB.map[cls] = DB.map[cls].filter(x => x !== sub);
+            }
+            saveDB();
+        }
+
+        // دوال الإدارة والترحيل
+        function addUser(type) {
+            let u = { id: Date.now().toString() };
+            u.name = document.getElementById(`${type}-n`).value.trim();
+            u.username = document.getElementById(`${type}-u`).value.trim();
+            u.password = document.getElementById(`${type}-p`).value.trim();
+            if(!u.name || !u.username || !u.password) return showAlert('أكمل البيانات', 'error');
+            if(DB.st.some(x=>x.username===u.username) || DB.sf.some(x=>x.username===u.username) || DB.ad.some(x=>x.username===u.username)) return showAlert('رقم الدخول مستخدم', 'error');
+
+            if(type==='st') { u.level = document.getElementById('st-l').value; u.grades={}; u.total=0; u.role='student'; u.history=[]; }
+            if(type==='sf') { u.subject = document.getElementById('sf-s').value; u.assignedClasses = Array.from(document.querySelectorAll('input[name="sf-cls"]:checked')).map(x=>x.value); u.role='staff'; if(!u.subject||u.assignedClasses.length===0) return showAlert('اختر مادة وصف', 'error');}
+            if(type==='ad') { u.role='admin'; }
+
+            DB[type].unshift(u); saveDB(); loadAdminTab(type==='ad'?'admins':(type==='st'?'students':'staff')); showAlert('تم الحفظ');
+        }
+
+        function delUser(type, id) { if(confirm('هل أنت متأكد من الحذف؟')) { DB[type] = DB[type].filter(x => x.id != id); saveDB(); loadAdminTab(type==='ad'?'admins':(type==='st'?'students':(type==='nw'?'news':'staff'))); showAlert('تم الحذف'); } }
+        function addList(key, id) { let v = document.getElementById(id).value.trim(); if(v && !DB[key].includes(v)) { DB[key].push(v); saveDB(); loadAdminTab('subjects'); } }
+        function delList(key, idx) { DB[key].splice(idx,1); saveDB(); loadAdminTab('subjects'); }
+        function addNews() { const t = document.getElementById('nw-title').value.trim(); const c = document.getElementById('nw-content').value.trim(); if(t && c) { DB.nw.unshift({id: Date.now().toString(), title: t, content: c}); saveDB(); loadAdminTab('news'); showAlert('تم النشر'); } else showAlert('أكمل الخبر', 'error'); }
+        function saveSettings() { DB.in.name = document.getElementById('set-n').value.trim() || 'مدرستي'; DB.in.bio = document.getElementById('set-b').value; DB.in.phone = document.getElementById('set-p').value; DB.in.currentYear = document.getElementById('set-y').value.trim(); saveDB(); showAlert('تم التحديث'); }
+        function saveTheme() { DB.th.p = document.getElementById('thm-p').value; DB.th.f = document.getElementById('thm-f').value; saveDB(); }
+
+        function promoteStudent(id) {
+            const sIdx = DB.st.findIndex(x => x.id == id); if(sIdx === -1) return; const s = DB.st[sIdx];
+            const mySubjects = DB.map[s.level] || DB.sb;
+            const passingScore = (mySubjects.length * 100) / 2; 
+            const isPassed = s.total >= passingScore; const statusStr = isPassed ? 'ناجح' : 'راسب';
+
+            s.history = s.history || [];
+            s.history.push({ year: DB.in.currentYear, level: s.level, grades: {...s.grades}, total: s.total, status: statusStr });
+
+            if(isPassed) {
+                const currentClassIdx = DB.cl.indexOf(s.level);
+                if(currentClassIdx !== -1 && currentClassIdx < DB.cl.length - 1) s.level = DB.cl[currentClassIdx + 1];
+                else if(currentClassIdx === DB.cl.length - 1) s.level = 'خريج';
+            }
+            s.grades = {}; s.total = 0; saveDB(); loadAdminTab('promotion'); showAlert(`تم أرشفة الطالب وترحيله (${statusStr})`);
+        }
+
+        function loadArchiveYears() {
+            const sid = document.getElementById('arc-student-sel').value; if(!sid) return showAlert('اختر الطالب', 'error');
+            const s = DB.st.find(x => x.id == sid); const cont = document.getElementById('arc-years-container'); const resArea = document.getElementById('arc-result-area'); resArea.classList.add('hidden');
+            if(!s.history || s.history.length === 0) { cont.innerHTML = '<p class="text-xs text-red-500 font-bold text-center mt-2">لا توجد سجلات</p>'; cont.classList.remove('hidden'); return; }
+            cont.innerHTML = `<select id="arc-year-sel" onchange="showArchiveResult('${s.id}')" class="w-full p-2 border-2 border-cyan-200 rounded-xl text-xs font-bold outline-none bg-cyan-50 text-cyan-800"><option value="">-- اختر العام الدراسي المؤرشف --</option>${s.history.map((h, i)=>`<option value="${i}">${h.year} (${h.level})</option>`).join('')}</select>`;
+            cont.classList.remove('hidden');
+        }
+
+        function showArchiveResult(sid) {
+            const histIdx = document.getElementById('arc-year-sel').value; const resArea = document.getElementById('arc-result-area');
+            if(histIdx === "") return resArea.classList.add('hidden');
+            const s = DB.st.find(x => x.id == sid); const hist = s.history[histIdx];
+            
+            const mySubjects = DB.map[hist.level] || DB.sb; 
+            const rows = mySubjects.map(sub => `<tr class="border-b border-slate-300"><td class="p-2 text-right font-bold text-xs text-slate-700 border-l border-slate-300">${sub}</td><td class="p-2 text-center font-black text-sm">${hist.grades[sub] || 0}</td></tr>`).join('');
+            
+            resArea.innerHTML = `
+                <div id="arc-result-print-area" class="w-full">
+                    <div class="text-center mb-4 border-b-2 border-black pb-4"><h2 class="text-2xl font-black mb-1">${DB.in.name}</h2><p class="text-xs font-bold text-slate-600 bg-slate-100 inline-block px-3 py-1 rounded border border-slate-300">أرشيف شهادة - العام (${hist.year})</p></div>
+                    <div class="flex items-center justify-between mb-6 px-2"><div class="text-right"><h3 class="text-lg font-black text-slate-800 mb-1">الاسم: ${s.name}</h3><p class="text-xs font-bold text-[#075e54]">الصف: ${hist.level} | <span class="text-cyan-700">النتيجة: ${hist.status}</span></p></div></div>
+                    <table class="w-full mb-4 border-collapse border border-slate-300"><thead class="bg-slate-100 text-slate-700 text-xs border-b-2 border-slate-300"><tr><th class="p-2 text-right border-l border-slate-300">المادة</th><th class="p-2 text-center w-24">الدرجة</th></tr></thead><tbody>${rows}</tbody></table>
+                    <div class="bg-slate-100 p-4 rounded-xl text-center border border-slate-300"><p class="text-xs opacity-70 mb-1 font-bold">المجموع</p><p class="text-3xl font-black text-slate-800">${hist.total}</p></div>
+                </div>
+                <button onclick="doPrint('arc-result-print-area')" class="w-full mt-4 bg-cyan-600 text-white py-3 rounded-xl font-bold no-print active:scale-95"><i data-lucide="printer" class="inline mb-1 mr-2" size="18"></i> طباعة أو حفظ كملف PDF</button>
+            `;
+            resArea.classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        // التعديل
+        function openEdit(type, id) {
+            const user = DB[type].find(x => x.id == id); if(!user) return;
+            document.getElementById('edit-type').value = type; document.getElementById('edit-id').value = id; document.getElementById('edit-name').value = user.name; document.getElementById('edit-username').value = user.username; document.getElementById('edit-password').value = user.password;
+            const extra = document.getElementById('edit-extra-fields');
+            if(type==='st') extra.innerHTML = `<div><label class="text-[10px] font-bold text-slate-500 mb-1 block">الصف</label><select id="edit-level" class="w-full p-3 bg-slate-50 border rounded-xl outline-none font-bold text-sm">${DB.cl.map(cl=>`<option value="${cl}" ${user.level===cl?'selected':''}>${cl}</option>`).join('')}</select></div>`;
+            else if(type==='sf') extra.innerHTML = `<div><label class="text-[10px] font-bold text-slate-500 mb-1 block">المادة</label><select id="edit-subject" class="w-full p-3 bg-slate-50 border rounded-xl outline-none font-bold text-sm">${DB.sb.map(s=>`<option value="${s}" ${user.subject===s?'selected':''}>${s}</option>`).join('')}</select></div>`;
+            else extra.innerHTML = '';
+            document.getElementById('edit-modal').classList.replace('hidden', 'flex');
+        }
+
+        function saveEditModal() {
+            const type = document.getElementById('edit-type').value; const id = document.getElementById('edit-id').value; const idx = DB[type].findIndex(x => x.id == id);
+            if(idx>-1) {
+                const u = document.getElementById('edit-username').value.trim();
+                if(u !== DB[type][idx].username && (DB.st.some(x=>x.username===u) || DB.sf.some(x=>x.username===u) || DB.ad.some(x=>x.username===u))) return showAlert('رقم الدخول مستخدم', 'error');
+                DB[type][idx].name = document.getElementById('edit-name').value.trim(); DB[type][idx].username = u; DB[type][idx].password = document.getElementById('edit-password').value.trim();
+                if(type==='st') DB[type][idx].level = document.getElementById('edit-level').value;
+                if(type==='sf') DB[type][idx].subject = document.getElementById('edit-subject').value;
+                saveDB(); closeModal('edit-modal'); loadAdminTab(type==='ad'?'admins':(type==='st'?'students':'staff')); showAlert('تم التعديل بنجاح');
+            }
+        }
+
+        // =====================================
+        // 5. المحادثة والمجموعات المفلترة
+        // =====================================
+        let chatTabMode = 'private';
+
+        function openChatMenu() { switchView('chat-menu'); setChatTab('private'); }
+
+        function setChatTab(tab) {
+            chatTabMode = tab;
+            document.getElementById('chat-tab-private').className = `flex-1 py-2 rounded-lg text-xs font-bold ${tab==='private'?'bg-white shadow-sm text-[#075e54]':'text-slate-500'}`;
+            document.getElementById('chat-tab-groups').className = `flex-1 py-2 rounded-lg text-xs font-bold ${tab==='groups'?'bg-white shadow-sm text-[#075e54]':'text-slate-500'}`;
+            renderChatList();
+        }
+
+        function renderChatList() {
+            const container = document.getElementById('chat-list-container');
+            let html = '';
+
+            if(chatTabMode === 'private') {
+                let allUsers = [];
+                if(currentUser.role === 'admin') allUsers = [...DB.ad, ...DB.sf, ...DB.st];
+                else if(currentUser.role === 'staff') allUsers = [...DB.ad, ...DB.st]; 
+                else allUsers = [...DB.ad, ...DB.sf]; 
+                allUsers = allUsers.filter(u => !(u.id === currentUser.id && u.role === currentUser.role));
+
+                html = allUsers.map(u => {
+                    let icon = u.role==='admin'?'<i data-lucide="shield-check" class="text-red-500"></i>':(u.role==='staff'?'<i data-lucide="briefcase" class="text-emerald-500"></i>':'<i data-lucide="user" class="text-blue-500"></i>');
+                    let roleStr = u.role==='admin'?'الإدارة':(u.role==='staff'?u.subject:u.level);
+                    return `<div onclick="openChatRoom('private', '${u.id}', '${u.role}', '${u.name}')" class="flex items-center gap-3 p-3 bg-white rounded-2xl border shadow-sm active:bg-slate-50 cursor-pointer">
+                        <div class="w-10 h-10 bg-slate-50 rounded-full flex items-center justify-center shrink-0 border">${icon}</div>
+                        <div class="flex-1 overflow-hidden"><h4 class="font-bold text-xs text-slate-800 truncate">${u.name}</h4><p class="text-[10px] text-slate-500 truncate mt-0.5">${roleStr}</p></div>
+                        <i data-lucide="chevron-left" size="14" class="text-slate-300"></i>
+                    </div>`;
+                }).join('');
+                if(!html) html = '<p class="text-center text-xs text-slate-400 mt-10 font-bold">لا يوجد مستخدمين</p>';
+            } else {
+                if(currentUser.role === 'admin' || currentUser.role === 'staff') {
+                    html += `<div onclick="openChatRoom('group', 'staff_room', 'group', 'غرفة الإدارة والمعلمين')" class="flex items-center gap-3 p-3 bg-amber-50 rounded-2xl border border-amber-200 shadow-sm active:bg-amber-100 cursor-pointer mb-3">
+                        <div class="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center shrink-0 text-amber-600"><i data-lucide="users"></i></div>
+                        <div class="flex-1 overflow-hidden"><h4 class="font-black text-xs text-amber-800 truncate">غرفة الإدارة والمعلمين</h4><p class="text-[10px] text-amber-600 truncate mt-0.5">دردشة خاصة بالكادر فقط</p></div>
+                    </div>`;
+                }
+
+                let myClasses = [];
+                if(currentUser.role === 'admin') DB.cl.forEach(c => (DB.map[c] || DB.sb).forEach(s => myClasses.push(`${s} - ${c}`)));
+                else if(currentUser.role === 'staff') currentUser.assignedClasses.forEach(c => { if((DB.map[c] || DB.sb).includes(currentUser.subject)) myClasses.push(`${currentUser.subject} - ${c}`) });
+                else (DB.map[currentUser.level] || DB.sb).forEach(s => myClasses.push(`${s} - ${currentUser.level}`)); 
+
+                html += myClasses.map(groupId => {
+                    return `<div onclick="openChatRoom('group', '${groupId}', 'group', '${groupId}')" class="flex items-center gap-3 p-3 bg-white rounded-2xl border shadow-sm active:bg-slate-50 cursor-pointer mb-2">
+                        <div class="w-10 h-10 bg-[#075e54]/10 rounded-full flex items-center justify-center shrink-0 text-[#075e54]"><i data-lucide="book-open"></i></div>
+                        <div class="flex-1 overflow-hidden"><h4 class="font-bold text-xs text-slate-800 truncate">${groupId}</h4><p class="text-[10px] text-slate-500 truncate mt-0.5">مجموعة دراسية</p></div>
+                    </div>`;
+                }).join('');
+            }
+            container.innerHTML = html; lucide.createIcons();
+        }
+
+        function updateChatInputState() {
+            const input = document.getElementById('chat-input'); const btn = document.getElementById('chat-send-btn'); const blockBtn = document.getElementById('chat-block-btn');
+            input.disabled = false; btn.disabled = false; input.placeholder = "اكتب رسالة...";
+            
+            if (currentChatContext.type === 'private') {
+                const targetId = currentChatContext.targetId;
+                const targetRole = currentChatContext.targetRole;
+                
+                let canBlock = true;
+                if (currentUser.role === 'student' && (targetRole === 'admin' || targetRole === 'staff')) canBlock = false;
+                if (currentUser.role === 'staff' && targetRole === 'admin') canBlock = false;
+
+                if (canBlock) { blockBtn.classList.remove('hidden'); } 
+                else { blockBtn.classList.add('hidden'); }
+
+                const iBlockedThem = DB.bl.private[currentUser.id]?.includes(targetId);
+                const theyBlockedMe = DB.bl.private[targetId]?.includes(currentUser.id);
+                
+                if (iBlockedThem) { 
+                    if(canBlock) { blockBtn.classList.replace('text-white', 'text-red-500'); blockBtn.classList.replace('bg-red-500/20', 'bg-white'); }
+                    input.disabled = true; btn.disabled = true; input.placeholder = "لقد قمت بحظر هذا المستخدم."; 
+                }
+                else if (theyBlockedMe) { 
+                    if(canBlock) { blockBtn.classList.replace('text-red-500', 'text-white'); blockBtn.classList.replace('bg-white', 'bg-red-500/20'); }
+                    input.disabled = true; btn.disabled = true; input.placeholder = "لا يمكنك إرسال رسائل لهذا المستخدم."; 
+                }
+                else { 
+                    if(canBlock) { blockBtn.classList.replace('text-red-500', 'text-white'); blockBtn.classList.replace('bg-white', 'bg-red-500/20'); }
+                }
+            } else {
+                blockBtn.classList.add('hidden'); const groupId = currentChatContext.targetId;
+                if (DB.bl.groups[groupId]?.includes(currentUser.id)) { input.disabled = true; btn.disabled = true; input.placeholder = "أنت محظور من الإرسال في هذه المجموعة."; }
+            }
+        }
+
+        function togglePrivateBlock() {
+            const targetId = currentChatContext.targetId; 
+            const targetRole = currentChatContext.targetRole;
+            
+            if (currentUser.role === 'student' && (targetRole === 'admin' || targetRole === 'staff')) return showAlert('لا تملك صلاحية لحظر هذا المستخدم.', 'error');
+            if (currentUser.role === 'staff' && targetRole === 'admin') return showAlert('لا يمكنك حظر مدير النظام.', 'error');
+
+            if(!DB.bl.private[currentUser.id]) DB.bl.private[currentUser.id] = [];
+            const index = DB.bl.private[currentUser.id].indexOf(targetId);
+            if (index > -1) { DB.bl.private[currentUser.id].splice(index, 1); showAlert('تم فك الحظر.'); } 
+            else { DB.bl.private[currentUser.id].push(targetId); showAlert('تم حظر المستخدم ولن تصلك رسائله.', 'error'); }
+            saveDB(); updateChatInputState();
+        }
+
+        function toggleGroupMute(groupId, memberId) {
+            if(!DB.bl.groups[groupId]) DB.bl.groups[groupId] = [];
+            const index = DB.bl.groups[groupId].indexOf(memberId);
+            if (index > -1) { DB.bl.groups[groupId].splice(index, 1); showAlert('تم السماح له بالإرسال.'); } 
+            else { DB.bl.groups[groupId].push(memberId); showAlert('تم حظره من الإرسال.', 'error'); }
+            saveDB(); showChatMembers();
+        }
+
+        function openChatRoom(type, targetId, targetRole, targetName) {
+            currentChatContext = { type, targetId, targetRole, targetName };
+            document.getElementById('chat-room-name').innerText = targetName; document.getElementById('chat-room-sub').innerText = type==='private' ? 'مراسلة خاصة' : 'دردشة جماعية';
+            let iconHtml = type==='private'?'<i data-lucide="user"></i>':'<i data-lucide="users"></i>'; if(targetId === 'staff_room') iconHtml = '<i data-lucide="briefcase"></i>'; document.getElementById('chat-room-icon').innerHTML = iconHtml;
+
+            const infoBtn = document.getElementById('chat-info-btn');
+            if(type === 'group') infoBtn.classList.remove('hidden'); else infoBtn.classList.add('hidden');
+
+            updateChatInputState(); switchView('chat-room'); renderMessages(); lucide.createIcons();
+        }
+
+        function showChatMembers() {
+            const list = document.getElementById('members-list'); const groupId = currentChatContext.targetId; let html = '';
+            const mutedUsers = DB.bl.groups[groupId] || [];
+
+            if(groupId === 'staff_room') {
+                DB.ad.forEach(a => html += `<div class="p-2 border-b text-xs font-bold text-red-600 flex items-center gap-2"><i data-lucide="shield-check" size="14"></i> ${a.name} (مدير)</div>`);
+                DB.sf.forEach(s => { let muteBtn = currentUser.role === 'admin' ? `<button onclick="toggleGroupMute('${groupId}', '${s.id}')" class="ml-auto text-[10px] px-2 py-1 rounded ${mutedUsers.includes(s.id) ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}">${mutedUsers.includes(s.id) ? 'سماح' : 'حظر من الإرسال'}</button>` : ''; html += `<div class="p-2 border-b text-xs font-bold text-slate-700 flex items-center gap-2"><i data-lucide="briefcase" size="14"></i> <span class="${mutedUsers.includes(s.id)?'line-through opacity-50':''}">${s.name} (${s.subject})</span> ${muteBtn}</div>`; });
+            } else {
+                const parts = groupId.split(' - '); const subject = parts[0]; const level = parts[1];
+                DB.sf.filter(s => s.subject === subject && s.assignedClasses.includes(level)).forEach(s => { let muteBtn = currentUser.role === 'admin' ? `<button onclick="toggleGroupMute('${groupId}', '${s.id}')" class="ml-auto text-[10px] px-2 py-1 rounded ${mutedUsers.includes(s.id) ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}">${mutedUsers.includes(s.id) ? 'سماح' : 'حظر من الإرسال'}</button>` : ''; html += `<div class="p-2 border-b text-xs font-black text-emerald-600 flex items-center gap-2 bg-emerald-50 rounded"><i data-lucide="briefcase" size="14"></i> <span class="${mutedUsers.includes(s.id)?'line-through opacity-50':''}">${s.name} (المعلم)</span> ${muteBtn}</div>`; });
+                DB.st.filter(s => s.level === level).forEach(s => { let muteBtn = (currentUser.role === 'admin' || currentUser.role === 'staff') ? `<button onclick="toggleGroupMute('${groupId}', '${s.id}')" class="ml-auto text-[10px] px-2 py-1 rounded ${mutedUsers.includes(s.id) ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}">${mutedUsers.includes(s.id) ? 'سماح' : 'حظر من الإرسال'}</button>` : ''; html += `<div class="p-2 border-b text-xs font-bold text-slate-700 flex items-center gap-2 ml-2"><i data-lucide="user" size="14"></i> <span class="${mutedUsers.includes(s.id)?'line-through opacity-50':''}">${s.name}</span> ${muteBtn}</div>`; });
+            }
+            list.innerHTML = html || '<p class="text-center text-xs text-slate-400">لا يوجد أعضاء</p>'; document.getElementById('members-modal').classList.replace('hidden', 'flex'); lucide.createIcons();
+        }
+
+        function renderMessages() {
+            const area = document.getElementById('chat-messages-area'); let msgs = [];
+            if(currentChatContext.type === 'private') { msgs = DB.msg_p.filter(m => (m.senderId == currentUser.id && m.senderRole === currentUser.role && m.receiverId == currentChatContext.targetId && m.receiverRole === currentChatContext.targetRole) || (m.senderId == currentChatContext.targetId && m.senderRole === currentChatContext.targetRole && m.receiverId == currentUser.id && m.receiverRole === currentUser.role) ); } else { msgs = DB.msg_g.filter(m => m.groupId === currentChatContext.targetId); }
+            area.innerHTML = msgs.map(m => { const isMine = m.senderId == currentUser.id && m.senderRole === currentUser.role; const senderName = isMine ? 'أنت' : m.senderName; return `<div class="flex flex-col ${isMine ? 'items-start' : 'items-end'}">${!isMine && currentChatContext.type === 'group' ? `<span class="text-[9px] font-bold text-slate-500 ml-2 mb-1">${senderName}</span>` : ''}<div class="chat-bubble ${isMine ? 'chat-mine' : 'chat-other shadow-sm'}">${m.text}<div class="text-[8px] opacity-60 text-right mt-1 leading-none">${m.time}</div></div></div>`; }).join('');
+            setTimeout(()=> { area.scrollTop = area.scrollHeight; }, 50);
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('chat-input'); const text = input.value.trim(); if(!text) return;
+            const time = new Date().toLocaleTimeString('ar-SA', {hour: '2-digit', minute:'2-digit'}); const msgObj = { id: Date.now(), senderId: currentUser.id, senderRole: currentUser.role, senderName: currentUser.name, text: text, time: time };
+            if(currentChatContext.type === 'private') { msgObj.receiverId = currentChatContext.targetId; msgObj.receiverRole = currentChatContext.targetRole; DB.msg_p.push(msgObj); } 
+            else { msgObj.groupId = currentChatContext.targetId; DB.msg_g.push(msgObj); }
+            input.value = ''; saveDB(); renderMessages();
+        }
+
+        // =====================================
+        // 6. تقارير الإدارة (الطباعة المحدثة)
+        // =====================================
+        function generateAdminReport() {
+            const cls = document.getElementById('rep-cls-sel').value; if(!cls) return showAlert('يرجى اختيار الصف أولاً', 'error');
+            const list = DB.st.filter(s => s.level === cls); if(list.length === 0) return showAlert('لا يوجد طلاب', 'error');
+            document.getElementById('rep-class-name').innerText = cls; 
+            
+            const mySubjects = DB.map[cls] || DB.sb;
+
+            let thHtml = `<tr><th class="p-2 border border-black w-8 text-center bg-slate-200">م</th><th class="p-2 border border-black text-right min-w-[100px] bg-slate-200">الاسم</th>`; 
+            mySubjects.forEach(sub => { thHtml += `<th class="p-2 border border-black text-center whitespace-nowrap bg-slate-200">${sub}</th>`; }); 
+            thHtml += `<th class="p-2 border border-black text-center bg-slate-300 w-12">المجموع العام</th></tr>`; 
+            document.getElementById('rep-table-head').innerHTML = thHtml;
+
+            let tbHtml = ''; 
+            list.forEach((s, index) => { 
+                tbHtml += `<tr><td class="p-2 border border-black text-center font-bold">${index + 1}</td><td class="p-2 border border-black font-bold whitespace-nowrap">${s.name}</td>`; 
+                mySubjects.forEach(sub => { 
+                    const g = (s.grades && s.grades[sub]) || {};
+                    const tot = g.total !== undefined ? g.total : (Number(g) || 0);
+                    tbHtml += `<td class="p-2 border border-black text-center">${tot}</td>`; 
+                }); 
+                tbHtml += `<td class="p-2 border border-black text-center font-black bg-slate-50">${s.total}</td></tr>`; 
+            }); 
+            document.getElementById('rep-table-body').innerHTML = tbHtml;
+            
+            doPrint('admin-report-print-area');
+        }
+
+        // =====================================
+        // 7. الرصد والشهادة 
+        // =====================================
+        function renderTeacherPortal() {
+            document.getElementById('tch-name').innerText = "أ. " + currentUser.name; document.getElementById('tch-subject').innerText = currentUser.subject;
+            document.getElementById('tch-class-selector').innerHTML = '<option value="">-- اضغط لاختيار الصف --</option>' + currentUser.assignedClasses.map(c=>`<option value="${c}">${c}</option>`).join('');
+            document.getElementById('tch-students-tbody').innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-400 text-xs font-bold">يرجى اختيار الصف لظهور الأسماء</td></tr>`;
+        }
+
+        function renderTeacherStudents() {
+            const cls = document.getElementById('tch-class-selector').value; const tbody = document.getElementById('tch-students-tbody');
+            if(!cls) return tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-400 text-xs font-bold">يرجى اختيار الصف</td></tr>`;
+            
+            document.getElementById('print-tch-school').innerText = DB.in.name; document.getElementById('print-tch-sub').innerText = currentUser.subject; document.getElementById('print-tch-cls').innerText = cls; document.getElementById('print-tch-tname').innerText = "أ. " + currentUser.name; document.getElementById('print-tch-year').innerText = DB.in.currentYear;
+            const list = DB.st.filter(s => s.level === cls); if(list.length === 0) return tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-400 text-xs font-bold">لا يوجد طلاب</td></tr>`;
+            
+            tbody.innerHTML = list.map(s => {
+                const g = (s.grades && s.grades[currentUser.subject]) || {term1:0, mid:0, term2:0, final:0, total:0};
+                const t1 = g.term1 || 0, m1 = g.mid || 0, t2 = g.term2 || 0, f = g.final || 0, tot = g.total !== undefined ? g.total : (Number(g) || 0);
+                return `
+                <tr class="bg-white border-b border-slate-50">
+                    <td class="p-2 font-bold text-[11px] whitespace-nowrap sticky right-0 bg-white border-l border-slate-200 z-10">${s.name}</td>
+                    <td class="p-1 text-center"><input type="number" id="g-t1-${s.id}" value="${t1}" class="w-12 border rounded p-1 text-center font-bold outline-none focus:border-emerald-500 text-[10px] bg-slate-50 print-only-text"></td>
+                    <td class="p-1 text-center"><input type="number" id="g-m1-${s.id}" value="${m1}" class="w-12 border rounded p-1 text-center font-bold outline-none focus:border-emerald-500 text-[10px] bg-slate-50 print-only-text"></td>
+                    <td class="p-1 text-center border-l border-slate-200"><input type="number" id="g-t2-${s.id}" value="${t2}" class="w-12 border rounded p-1 text-center font-bold outline-none focus:border-emerald-500 text-[10px] bg-slate-50 print-only-text"></td>
+                    <td class="p-1 text-center"><input type="number" id="g-f-${s.id}" value="${f}" class="w-12 border rounded p-1 text-center font-bold outline-none focus:border-emerald-500 text-[10px] bg-slate-50 print-only-text"></td>
+                    <td class="p-1 text-center font-black text-emerald-700 text-[11px] print-only-text">${tot}</td>
+                    <td class="p-1 text-center no-print"><button onclick="saveGrade(${s.id})" class="bg-[#075e54] text-white px-2 py-1 rounded text-[10px] font-bold active:scale-95">حفظ</button></td>
+                </tr>`;
+            }).join('');
+        }
+
+        function saveGrade(sid) {
+            const t1 = Number(document.getElementById('g-t1-'+sid).value) || 0;
+            const m1 = Number(document.getElementById('g-m1-'+sid).value) || 0;
+            const t2 = Number(document.getElementById('g-t2-'+sid).value) || 0;
+            const f  = Number(document.getElementById('g-f-'+sid).value) || 0;
+            const subTotal = t1 + m1 + t2 + f;
+
+            const sIdx = DB.st.findIndex(x => x.id == sid);
+            if(sIdx > -1) { 
+                if(!DB.st[sIdx].grades) DB.st[sIdx].grades = {}; 
+                DB.st[sIdx].grades[currentUser.subject] = { term1: t1, mid: m1, term2: t2, final: f, total: subTotal }; 
+                
+                DB.st[sIdx].total = Object.values(DB.st[sIdx].grades).reduce((acc, curr) => {
+                    return acc + (curr.total !== undefined ? curr.total : (Number(curr) || 0));
+                }, 0);
+                
+                saveDB(); showAlert('تم رصد الدرجة بنجاح'); renderTeacherStudents();
+            }
+        }
+
+        function renderStudentCert() {
+            const mySubjects = DB.map[currentUser.level] || DB.sb;
+            const rows = mySubjects.map(sub => {
+                const g = (currentUser.grades && currentUser.grades[sub]) || {term1:0, mid:0, term2:0, final:0, total:0};
+                const t1 = g.term1 || 0, m1 = g.mid || 0, t2 = g.term2 || 0, f = g.final || 0, tot = g.total !== undefined ? g.total : (Number(g) || 0);
+                return `
+                <tr class="border-b border-slate-300 text-[11px] sm:text-xs">
+                    <td class="p-2 text-right font-bold text-slate-800 border-l border-slate-300 bg-slate-50">${sub}</td>
+                    <td class="p-2 text-center border-l border-slate-300 text-slate-600">${t1}</td>
+                    <td class="p-2 text-center border-l border-slate-300 font-bold">${m1}</td>
+                    <td class="p-2 text-center border-l border-slate-300 text-slate-600">${t2}</td>
+                    <td class="p-2 text-center border-l border-slate-300 font-bold">${f}</td>
+                    <td class="p-2 text-center font-black ${tot>=50?'text-emerald-600':'text-red-500'} print:text-black">${tot}</td>
+                </tr>`;
+            }).join('');
+            
+            document.getElementById('stu-cert-area').innerHTML = `
+                <div class="text-center mb-6 border-b-2 border-black pb-4 w-full">
+                    <h2 class="text-2xl font-black mb-1">${DB.in.name}</h2>
+                    <p class="text-xs font-bold text-slate-600 bg-slate-100 inline-block px-3 py-1 rounded border border-slate-300">إشعار نتيجة - العام الدراسي (${DB.in.currentYear})</p>
+                </div>
+                <div class="flex items-center justify-between mb-6 px-2 w-full">
+                    <div class="text-right">
+                        <h3 class="text-lg font-black text-slate-800 mb-1">اسم الطالب: ${currentUser.name}</h3>
+                        <p class="text-xs font-bold text-[#075e54]">الصف الدراسي: ${currentUser.level}</p>
+                    </div>
+                    <div class="w-16 h-16 rounded-2xl bg-slate-100 border-2 border-slate-300 flex items-center justify-center text-slate-400 shrink-0">
+                        <i data-lucide="user" size="28"></i>
+                    </div>
+                </div>
+                <div class="overflow-x-auto w-full">
+                    <table class="w-full mb-6 border-collapse border border-slate-300 min-w-[450px]">
+                        <thead class="bg-slate-100 text-slate-700 text-[10px] sm:text-xs border-b-2 border-slate-300">
+                            <tr>
+                                <th class="p-2 text-right border-l border-slate-300">المادة الدراسية</th>
+                                <th class="p-2 text-center">محصلة ف1</th>
+                                <th class="p-2 text-center border-l border-slate-300">نصف السنة</th>
+                                <th class="p-2 text-center">محصلة ف2</th>
+                                <th class="p-2 text-center border-l border-slate-300">نهاية السنة</th>
+                                <th class="p-2 text-center w-16">المجموع</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+                <div class="bg-[#075e54] text-white p-4 sm:p-6 rounded-2xl text-center shadow-md print:bg-black print:text-white w-full" style="-webkit-print-color-adjust: exact; print-color-adjust: exact;">
+                    <p class="text-xs opacity-80 mb-1 font-bold">المجموع التراكمي العام</p>
+                    <p class="text-4xl sm:text-5xl font-black text-yellow-400 print:text-white">${currentUser.total || 0}</p>
+                </div>
+                <div class="mt-8 pt-6 border-t border-slate-300 justify-between font-bold text-[10px] sm:text-xs hidden print-only w-full flex-row">
+                    <p>توقيع مدير المدرسة: ........................</p>
+                    <p>تاريخ الإصدار: ${new Date().toLocaleDateString('ar-SA')}</p>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function renderPublicStaff() { document.getElementById('public-staff-grid').innerHTML = DB.sf.map(s => `<div class="bg-white p-4 rounded-2xl border text-center shadow-sm"><div class="w-12 h-12 bg-slate-50 rounded-full mx-auto mb-2 flex items-center justify-center text-slate-400 border"><i data-lucide="user" size="20"></i></div><p class="font-bold text-xs text-slate-800 truncate">${s.name}</p><p class="text-[9px] font-black text-white px-2 py-1 rounded mt-1 inline-block" style="background-color: var(--p-color);">${s.subject}</p></div>`).join('') || '<div class="col-span-2 text-center text-slate-400 font-bold bg-white p-6 rounded-2xl border text-xs">لا يوجد كادر مضاف حتى الآن</div>'; lucide.createIcons(); }
+        function renderPublicNews() { document.getElementById('full-news-list').innerHTML = DB.nw.map(n => `<div class="bg-white p-5 rounded-2xl border shadow-sm border-r-4" style="border-right-color: var(--p-color);"><h3 class="text-sm font-black mb-2 text-slate-800">${n.title}</h3><p class="text-xs text-slate-600 leading-relaxed">${n.content}</p></div>`).join('') || '<div class="text-center text-slate-400 font-bold bg-white p-8 rounded-2xl border text-xs">لا توجد أخبار حالياً</div>'; }
+        function renderHome() { document.getElementById('info-bio').innerText = DB.in.bio; if(document.getElementById('home-year')) document.getElementById('home-year').innerText = DB.in.currentYear; document.getElementById('home-news-container').innerHTML = DB.nw.slice(0,3).map(n=>`<div class="bg-white p-4 rounded-2xl border shadow-sm"><h4 class="font-bold text-slate-800 text-sm mb-1 truncate">${n.title}</h4><p class="text-[11px] text-slate-500 line-clamp-2">${n.content}</p></div>`).join('') || '<div class="text-center opacity-50 font-bold bg-white p-6 rounded-2xl border text-xs">لا توجد أخبار</div>'; document.getElementById('footer-phone').innerHTML = `<i data-lucide="phone" size="14"></i> ${DB.in.phone || 'غير محدد'}`; document.getElementById('footer-email').innerHTML = `<i data-lucide="mail" size="14"></i> ${DB.in.email || 'غير محدد'}`; document.getElementById('footer-copy').innerText = `© ${DB.in.name}`; lucide.createIcons(); }
+
+        window.onload = () => { switchView('home'); };
+    </script>
+</body>
+</html>
